@@ -14,6 +14,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
+      - name: Verify cleanup access before arming
+        env:
+          GH_TOKEN: ${{ secrets.TEMPORARY_PAGES_CLEANUP }}
+        run: |
+          test -n "$GH_TOKEN"
+          gh api repos/sourcGI-code/marvel-preview-2026-11-03 --jq '.permissions.admin' | grep -qx true
+          gh api repos/sourcGI-code/marvel-preview-2026-11-03/pages --jq '.html_url'
       - name: Wait for November 3 at 11:59 PM America/New_York
         shell: python
         run: |
