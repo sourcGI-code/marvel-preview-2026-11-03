@@ -1,0 +1,66 @@
+name: Remove temporary link at 11:59 PM Eastern
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '59 4 4 11 *'
+    - cron: '7,17,37 5 4 11 *'
+permissions: {}
+concurrency:
+  group: temporary-link-expiry
+  cancel-in-progress: false
+jobs:
+  expire:
+    if: github.repository == 'sourcGI-code/marvel-preview-2026-11-03'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Wait for November 3 at 11:59 PM America/New_York
+        shell: python
+        run: |
+          import datetime, time
+          deadline = datetime.datetime(2026, 11, 4, 4, 59, tzinfo=datetime.timezone.utc).timestamp()
+          remaining = deadline - time.time()
+          if remaining > 5.5 * 3600:
+              raise SystemExit('Refusing to arm more than 5.5 hours before the deadline')
+          print('Shutdown armed for 2026-11-04 04:59:00 UTC (11:59 PM Eastern November 3).', flush=True)
+          while time.time() < deadline:
+              time.sleep(min(30, max(0, deadline - time.time())))
+      - name: Delete only the temporary GitHub Pages site
+        env:
+          GH_TOKEN: ${{ secrets.TEMPORARY_PAGES_CLEANUP }}
+        shell: python
+        run: |
+          import datetime, os, time, urllib.request, urllib.error
+          repo = 'sourcGI-code/marvel-preview-2026-11-03'
+          deadline = datetime.datetime(2026, 11, 4, 4, 59, tzinfo=datetime.timezone.utc).timestamp()
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          assert time.time() >= deadline, 'Refusing early shutdown'
+          token = os.environ['GH_TOKEN']
+          if not token:
+              raise SystemExit('Cleanup credential is missing')
+          def request(path, method):
+              req = urllib.request.Request('https://api.github.com/repos/' + repo + path, method=method,
+                  headers={'Authorization':'Bearer ' + token, 'Accept':'application/vnd.github+json',
+                           'X-GitHub-Api-Version':'2022-11-28', 'User-Agent':'marvel-temporary-link-cleanup'})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      return response.status
+              except urllib.error.HTTPError as error:
+                  return error.code
+          for attempt in range(20):
+              deleted = request('/pages', 'DELETE')
+              if deleted in (204, 404) and request('/pages', 'GET') == 404:
+                  print('Temporary GitHub Pages site is disabled.', flush=True)
+                  break
+              print('Cleanup attempt', attempt + 1, 'HTTP', deleted, flush=True)
+              time.sleep(30)
+          else:
+              raise SystemExit('Could not verify removal; backup schedule will retry')
+          status = request('/actions/secrets/TEMPORARY_PAGES_CLEANUP', 'DELETE')
+          if status not in (204, 404):
+              raise SystemExit('Site disabled; cleanup credential removal needs attention: HTTP ' + str(status))
+          print('Removed the temporary cleanup credential.', flush=True)
+          status = request('/actions/workflows/expire.yml/disable', 'PUT')
+          if status != 204:
+              raise SystemExit('Site disabled; workflow disable returned HTTP ' + str(status))
+          print('One-day cleanup completed; workflow disabled.', flush=True)
